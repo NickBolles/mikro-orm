@@ -12,6 +12,7 @@ describe('SchemaHelper', () => {
     expect(helper.getSchemaBeginning()).toBe('');
     expect(helper.getSchemaEnd()).toBe('');
     expect(helper.getTypeDefinition({ type: 'test' } as any)).toBe('test');
+    expect(() => helper.getListTablesSQL()).toThrow('Not supported by given driver');
   });
 
 });

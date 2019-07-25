@@ -27,4 +27,12 @@ export class SqliteSchemaHelper extends SchemaHelper {
     return false;
   }
 
+  supportsColumnAlter(): boolean {
+    return false;
+  }
+
+  getListTablesSQL(): string {
+    return `select name as table_name from sqlite_master where type = 'table' and name != 'sqlite_sequence' and name != 'geometry_columns' and name != 'spatial_ref_sys' union all select name from sqlite_temp_master where type = 'table' order by name`;
+  }
+
 }

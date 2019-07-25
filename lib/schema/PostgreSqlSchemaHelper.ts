@@ -35,4 +35,8 @@ export class PostgreSqlSchemaHelper extends SchemaHelper {
     return false;
   }
 
+  getListTablesSQL(): string {
+    return `select * from information_schema.tables where table_type = 'BASE TABLE' and table_schema not in ('pg_catalog', 'information_schema')`;
+  }
+
 }

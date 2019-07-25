@@ -1,8 +1,9 @@
 import { EntityManager } from './EntityManager';
-import { IDatabaseDriver } from './drivers';
+import { AbstractSqlDriver, IDatabaseDriver } from './drivers';
 import { MetadataDiscovery } from './metadata';
 import { Configuration, Logger, Options } from './utils';
 import { EntityMetadata } from './decorators';
+import { SchemaGenerator } from './schema';
 
 export class MikroORM {
 
@@ -59,6 +60,10 @@ export class MikroORM {
 
   getMetadata(): Record<string, EntityMetadata> {
     return this.metadata;
+  }
+
+  getSchemaGenerator(): SchemaGenerator {
+    return new SchemaGenerator(this.driver as AbstractSqlDriver, this.metadata);
   }
 
 }

@@ -1,6 +1,6 @@
 import { SchemaHelper } from './SchemaHelper';
 import { EntityProperty } from '../decorators';
-import { MySqlTableBuilder } from 'knex';
+import { ColumnInfo, MySqlTableBuilder } from 'knex';
 
 export class MySqlSchemaHelper extends SchemaHelper {
 
@@ -36,6 +36,14 @@ export class MySqlSchemaHelper extends SchemaHelper {
 
   getTypeDefinition(prop: EntityProperty): string {
     return super.getTypeDefinition(prop, MySqlSchemaHelper.TYPES, MySqlSchemaHelper.DEFAULT_TYPE_LENGTHS);
+  }
+
+  isSame(prop: EntityProperty, type: ColumnInfo): boolean {
+    return super.isSame(prop, type, MySqlSchemaHelper.TYPES);
+  }
+
+  getListTablesSQL(): string {
+    return `select table_name from information_schema.tables where table_type = 'BASE TABLE' and table_schema = schema()`;
   }
 
 }

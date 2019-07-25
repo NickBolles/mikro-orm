@@ -1,41 +1,155 @@
-import { ColumnBuilder, TableBuilder } from 'knex';
+import { ColumnBuilder, ColumnInfo, SchemaBuilder, TableBuilder } from 'knex';
 import { AbstractSqlDriver, Cascade, ReferenceType, Utils } from '..';
 import { EntityMetadata, EntityProperty } from '../decorators';
 import { Platform } from '../platforms';
+
+interface TableDefinition {
+  table_name: string;
+}
 
 export class SchemaGenerator {
 
   private readonly platform: Platform = this.driver.getPlatform();
   private readonly helper = this.platform.getSchemaHelper();
-  private readonly knex = this.driver.getConnection().getKnex();
+  private readonly connection = this.driver.getConnection();
+  private readonly knex = this.connection.getKnex();
 
   constructor(private readonly driver: AbstractSqlDriver,
               private readonly metadata: Record<string, EntityMetadata>) { }
 
-  generate(): string {
+  async generate(): Promise<string> {
+    let ret = await this.dropSchema(false, false);
+    ret += await this.createSchema(false, false);
+
+    return this.wrapSchema(ret);
+  }
+
+  async createSchema(run = false, wrap = true): Promise<string> {
+    let ret = '';
+
+    for (const meta of Object.values(this.metadata)) {
+      ret += await this.dump(this.createTable(meta), run);
+    }
+
+    for (const meta of Object.values(this.metadata)) {
+      ret += await this.dump(this.knex.schema.alterTable(meta.collection, table => this.createForeignKeys(table, meta)), run);
+    }
+
+    return this.wrapSchema(ret, wrap);
+  }
+
+  async dropSchema(run = false, wrap = true): Promise<string> {
+    let ret = '';
+
+    for (const meta of Object.values(this.metadata)) {
+      ret += await this.dump(this.knex.schema.dropTableIfExists(meta.collection), run, '\n');
+    }
+
+    return this.wrapSchema(ret + '\n', wrap);
+  }
+
+  async updateSchema(run = false, wrap = true): Promise<string> {
+    let ret = '';
+    const tables = await this.connection.execute<TableDefinition[]>(this.helper.getListTablesSQL());
+
+    for (const meta of Object.values(this.metadata)) {
+      const hasTable = await this.knex.schema.hasTable(meta.collection);
+
+      if (!hasTable) {
+        ret += await this.dump(this.createTable(meta), run);
+        ret += await this.dump(this.knex.schema.alterTable(meta.collection, table => this.createForeignKeys(table, meta)), run);
+
+        continue;
+      }
+
+      const cols = await this.knex(meta.collection).columnInfo();
+      const sql = await Utils.runSerial(this.updateTable(meta, cols), builder => this.dump(builder, run));
+      ret += sql.join('\n');
+    }
+
+    const definedTables = Object.values(this.metadata).map(meta => meta.collection);
+    const remove = tables.filter(table => !definedTables.includes(table.table_name));
+
+    for (const table of remove) {
+      ret += await this.dump(this.knex.schema.dropTable(table.table_name), run);
+    }
+
+    return this.wrapSchema(ret, wrap);
+  }
+
+  private async wrapSchema(sql: string, wrap = true): Promise<string> {
+    if (!wrap) {
+      return sql;
+    }
+
     let ret = this.helper.getSchemaBeginning();
-
-    Object.values(this.metadata).forEach(meta => ret += this.knex.schema.dropTableIfExists(meta.collection).toQuery() + ';\n');
-    ret += '\n';
-    Object.values(this.metadata).forEach(meta => ret += this.createTable(meta));
-    Object.values(this.metadata).forEach(meta => {
-      const alter = this.knex.schema.alterTable(meta.collection, table => this.createForeignKeys(table, meta)).toQuery();
-      ret += alter ? alter + ';\n\n' : '';
-    });
-
+    ret += sql;
     ret += this.helper.getSchemaEnd();
 
     return ret;
   }
 
-  private createTable(meta: EntityMetadata): string {
+  private createTable(meta: EntityMetadata): SchemaBuilder {
     return this.knex.schema.createTable(meta.collection, table => {
       Object
         .values(meta.properties)
         .filter(prop => this.shouldHaveColumn(prop))
         .forEach(prop => this.createTableColumn(table, prop));
       this.helper.finalizeTable(table);
-    }).toQuery() + ';\n\n';
+    });
+  }
+
+  private updateTable(meta: EntityMetadata, existingColumns: ColumnInfo): SchemaBuilder[] {
+    const props = Object.values(meta.properties).filter(prop => this.shouldHaveColumn(prop));
+    const create: EntityProperty[] = [];
+    const update: EntityProperty[] = [];
+    const columns = Object.keys(existingColumns);
+    const remove = columns.filter(name => !props.find(prop => prop.fieldName === name));
+    const ret: SchemaBuilder[] = [];
+
+    for (const prop of props) {
+      const col = columns.find(name => name === prop.fieldName);
+      const column = existingColumns[col as keyof typeof existingColumns] as object as ColumnInfo;
+
+      if (!col) {
+        create.push(prop);
+        continue;
+      }
+
+      // TODO check whether we need to update the column based on `cols`
+      if (this.helper.supportsColumnAlter() && !this.helper.isSame(prop, column)) {
+        update.push(prop);
+      }
+    }
+
+    if (create.length + update.length === 0) {
+      return ret;
+    }
+
+    ret.push(this.knex.schema.alterTable(meta.collection, table => {
+      if (this.helper.supportsColumnAlter()) {
+        table.dropPrimary();
+      }
+
+      const fks = update.filter(prop => prop.reference !== ReferenceType.SCALAR);
+      fks.forEach(fk => table.dropForeign([fk.name]));
+    }));
+
+    ret.push(this.knex.schema.alterTable(meta.collection, table => {
+      for (const prop of create) {
+        this.createTableColumn(table, prop);
+      }
+
+      for (const prop of update) {
+        this.updateTableColumn(table, prop);
+      }
+
+      if (remove.length > 0) {
+        table.dropColumns(...remove);
+      }
+    }));
+
+    return ret;
   }
 
   private shouldHaveColumn(prop: EntityProperty): boolean {
@@ -64,6 +178,14 @@ export class SchemaGenerator {
     this.configureColumn(prop, col, alter);
 
     return col;
+  }
+
+  private updateTableColumn(table: TableBuilder, prop: EntityProperty, alter = false): ColumnBuilder {
+    if (prop.primary) {
+      table.dropPrimary();
+    }
+
+    return this.createTableColumn(table, prop, alter).alter();
   }
 
   private configureColumn(prop: EntityProperty, col: ColumnBuilder, alter: boolean) {
@@ -127,6 +249,16 @@ export class SchemaGenerator {
 
     const meta = this.metadata[prop.type];
     return this.helper.getTypeDefinition(meta.properties[meta.primaryKey]);
+  }
+
+  private async dump(builder: SchemaBuilder, run: boolean, append = '\n\n'): Promise<string> {
+    if (run) {
+      await builder;
+    }
+
+    const sql = builder.toQuery();
+
+    return sql.length > 0 ? `${sql};${append}` : '';
   }
 
 }
