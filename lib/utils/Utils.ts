@@ -4,6 +4,7 @@ import clone from 'clone';
 import { MetadataStorage } from '../metadata';
 import { EntityData, EntityMetadata, EntityProperty, IEntity, IEntityType, IPrimaryKey } from '../decorators';
 import { ArrayCollection, Collection, ReferenceType } from '../entity';
+import { normalize, join, resolve, isAbsolute } from 'path';
 
 export class Utils {
 
@@ -240,7 +241,15 @@ export class Utils {
   }
 
   static normalizePath(...parts: string[]): string {
-    return parts.join('/').replace(/\\/g, '/');
+    return normalize(resolve(...parts));
+  }
+
+  static toAbsolutePath(dir: string, baseDir: string) {
+    if (isAbsolute(dir)) {
+      return Utils.normalizePath(dir);
+    }
+
+    return Utils.normalizePath(baseDir, dir);
   }
 
 }

@@ -4,6 +4,7 @@ import { pathExists } from 'fs-extra';
 import { MetadataProvider } from './MetadataProvider';
 import { EntityMetadata, EntityProperty } from '../decorators';
 import { Utils } from '../utils';
+import globby from 'globby';
 
 export class TypeScriptMetadataProvider extends MetadataProvider {
 
@@ -54,28 +55,52 @@ export class TypeScriptMetadataProvider extends MetadataProvider {
 
   private async initSourceFiles(): Promise<void> {
     const tsDirs = this.config.get('entitiesDirsTs');
+    const baseDir = this.config.get('baseDir');
 
     if (tsDirs.length > 0) {
-      const dirs = await this.validateDirectories(tsDirs);
+      const dirs = await this.validateDirectories(tsDirs, baseDir);
       this.sources = this.project.addExistingSourceFiles(dirs);
     } else {
       this.sources = this.project.addSourceFilesFromTsConfig(this.config.get('tsConfigPath'));
     }
   }
 
-  private async validateDirectories(dirs: string[]): Promise<string[]> {
+  private async validateDirectories(dirs: string[], baseDir: string): Promise<string[]> {
     const ret: string[] = [];
 
     for (const dir of dirs) {
-      const path = Utils.normalizePath(this.config.get('baseDir'), dir);
-
-      if (!await pathExists(path)) {
-        throw new Error(`Path ${path} does not exist`);
-      }
-
-      ret.push(Utils.normalizePath(path, '**', '*.ts'));
+      ret.push(...(await this.validateDirectory(dir, baseDir)));
     }
 
+    return ret;
+  }
+
+  private async validateDirectory(dir: string, baseDir: string): Promise<string[]> {
+    const ret: string[] = [];
+    const path = Utils.toAbsolutePath(dir, baseDir);
+
+    if (globby.hasMagic(path)) {
+      return this.validateDirGlob(path, baseDir);
+    }
+
+    if (!(await pathExists(path))) {
+      throw new Error(`Path ${path} does not exist`);
+    }
+    ret.push(Utils.normalizePath(path, '**', '*.ts'));
+
+    return ret;
+  }
+
+  private async validateDirGlob(dirGlob: string, baseDir: string): Promise<string[]> {
+    const ret: string[] = [];
+    const dirs = await globby(dirGlob, {
+      cwd: baseDir,
+      onlyDirectories: true,
+    });
+
+     for (const dir of dirs) {
+      ret.push(...(await this.validateDirectory(dir, baseDir)));
+    }
     return ret;
   }
 

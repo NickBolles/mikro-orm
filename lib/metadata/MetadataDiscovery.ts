@@ -1,5 +1,5 @@
 import globby from 'globby';
-import { extname } from 'path';
+import { extname, parse } from 'path';
 
 import { EntityClass, EntityClassGroup, EntityMetadata, EntityProperty, IEntityType } from '../decorators';
 import { EntityManager } from '../EntityManager';
@@ -58,23 +58,16 @@ export class MetadataDiscovery {
   }
 
   private async discoverDirectory(basePath: string): Promise<void> {
-    const files = await globby('*', { cwd: Utils.normalizePath(this.config.get('baseDir'), basePath) });
+    const baseDir = this.config.get('baseDir');
+    const globsToIgnore = ['*.js.map', '*.d.ts', '.*', 'index.[jt]s'];
+    const glob = [`${basePath}/(*.[jt]s)`, `**/!{${globsToIgnore.join(',')}}`];
+    const files = await globby(glob, { cwd: baseDir });
+
     this.logger.debug(`- processing ${files.length} files from directory ${basePath}`);
 
     for (const file of files) {
-      if (
-        !file.match(/\.[jt]s$/) ||
-        file.endsWith('.js.map') ||
-        file.endsWith('.d.ts') ||
-        file.startsWith('.') ||
-        file.match(/index\.[jt]s$/)
-      ) {
-        this.logger.debug(`- ignoring file ${file}`);
-        continue;
-      }
-
       const name = this.getClassName(file);
-      const path = Utils.normalizePath(this.config.get('baseDir'), basePath, file);
+      const path = Utils.normalizePath(baseDir, file);
       const target = require(path)[name]; // include the file to trigger loading of metadata
       await this.discoverEntity(target, path);
     }
@@ -271,7 +264,8 @@ export class MetadataDiscovery {
   }
 
   private getClassName(file: string): string {
-    const name = file.split('.')[0];
+    const filename = parse(file).name;
+    const name = filename.split('.')[0];
     const ret = name.replace(/-(\w)/, m => m[1].toUpperCase());
 
     return ret.charAt(0).toUpperCase() + ret.slice(1);
