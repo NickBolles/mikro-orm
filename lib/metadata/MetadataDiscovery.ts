@@ -60,7 +60,8 @@ export class MetadataDiscovery {
   private async discoverDirectory(basePath: string): Promise<void> {
     const baseDir = this.config.get('baseDir');
     const globsToIgnore = ['*.js.map', '*.d.ts', '.*', 'index.[jt]s'];
-    const glob = [`${basePath}/(*.[jt]s)`, `**/!{${globsToIgnore.join(',')}}`];
+    const glob = [`${basePath}/(*.[jt]s)`, `!${basePath}/{${globsToIgnore.join(',')}}`];
+    this.logger.debug(`- expanding glob ${glob}`);
     const files = await globby(glob, { cwd: baseDir });
 
     this.logger.debug(`- processing ${files.length} files from directory ${basePath}`);
@@ -78,9 +79,9 @@ export class MetadataDiscovery {
     this.logger.debug(`- processing entity ${entity.name}`);
 
     const meta = MetadataStorage.getMetadata(entity.name);
-    meta.prototype = entity.prototype;
+    meta.prototype = Object.getPrototypeOf(entity);
     meta.path = path || meta.path;
-    meta.toJsonParams = Utils.getParamNames(entity.prototype.toJSON || '').filter(p => p !== '...args');
+    meta.toJsonParams = Utils.getParamNames(meta.prototype.toJSON || '').filter(p => p !== '...args');
     const cache = meta.path && await this.cache.get(entity.name + extname(meta.path));
 
     if (cache) {
